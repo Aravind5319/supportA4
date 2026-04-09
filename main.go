@@ -544,47 +544,46 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	
 	// --- DATABASE EVENT WEBHOOK INTERCEPTION ---
 	appwriteEvent := Context.Req.Headers["x-appwrite-event"]
-	if appwriteEvent != "" {
-		Context.Log("RADAR TRAPPED EVENT: " + appwriteEvent)
+	if appwriteEvent != "" && (strings.Contains(appwriteEvent, "documents") || strings.Contains(appwriteEvent, "rows")) {
+		var eventDoc map[string]interface{}
+		_ = ParseBody(Context.Req.Body, &eventDoc)
 		
-		// If it's a document/row update in our tasks collection
-		if strings.Contains(appwriteEvent, "documents") || strings.Contains(appwriteEvent, "rows") {
-			var eventDoc map[string]interface{}
-			_ = ParseBody(Context.Req.Body, &eventDoc)
-			
-			// Normalize data
-			priority, _ := eventDoc["priority"].(string)
-			employeeId, _ := eventDoc["employeeId"].(string)
-			
-			Context.Log(fmt.Sprintf("DEBUG: Extracted Priority='%s', EmployeeId='%s'", priority, employeeId))
-			
-			if strings.ToUpper(priority) == "HIGH" {
-				if employeeId != "" {
-					// 1. Direct assigned technician notification (WhatsApp style)
-					userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
-					if err == nil {
-						if _, ok := userMap["fcmToken"].(string); ok {
-							Context.Log("Direct Push to Tech: " + employeeId)
-							api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: Assigned Task", "New high priority task assigned to you!")
-						}
-					}
-				} else {
-					// 2. Broadcast to ALL technicians because it's unassigned!
-					Context.Log("Unassigned HIGH priority task! Broadcasting to all techs...")
-					usersRaw, _ := api.ListDocuments(DatabaseId, UsersCollection)
-					var broadcastIds []string
-					for _, u := range usersRaw {
-						if id, ok := u["$id"].(string); ok && id != "" {
-							broadcastIds = append(broadcastIds, id)
-						}
-					}
-					if len(broadcastIds) > 0 {
-						api.SendPushNotification(broadcastIds, "🚨 BROADCAST: High Priority", "New unassigned high priority task! Someone please attend!")
+		priority, _ := eventDoc["priority"].(string)
+		employeeId, _ := eventDoc["employeeId"].(string)
+		printerId, _ := eventDoc["printerId"].(string)
+		location, _ := eventDoc["location"].(string)
+		issues, _ := eventDoc["issues"].(string)
+		
+		if strings.ToUpper(priority) == "HIGH" {
+			title := "🚨 High Priority Alarm"
+			body := fmt.Sprintf("Printer: %s | Issue: %s", printerId, issues)
+			if location != "" {
+				body = fmt.Sprintf("%s @ %s", body, location)
+			}
+
+			if employeeId != "" {
+				// 1. Direct assigned technician notification (WhatsApp style)
+				userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
+				if err == nil {
+					if _, ok := userMap["fcmToken"].(string); ok {
+						api.SendPushNotification([]string{employeeId}, title, body)
 					}
 				}
+			} else {
+				// 2. Broadcast to ALL technicians because it's unassigned!
+				usersRaw, _ := api.ListDocuments(DatabaseId, UsersCollection)
+				var broadcastIds []string
+				for _, u := range usersRaw {
+					if id, ok := u["$id"].(string); ok && id != "" {
+						broadcastIds = append(broadcastIds, id)
+					}
+				}
+				if len(broadcastIds) > 0 {
+					api.SendPushNotification(broadcastIds, "🚨 New Unassigned Task", body)
+				}
 			}
-			return Context.Res.Json(map[string]interface{}{"success": true, "event": appwriteEvent})
 		}
+		return Context.Res.Json(map[string]interface{}{"success": true})
 	}
 	// -------------------------------------------
 
