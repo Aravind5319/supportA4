@@ -257,9 +257,10 @@ func (api *AppwriteAPI) UpdateDocument(dbId, colId, docId string, data map[strin
 func (api *AppwriteAPI) CreateTarget(userId, providerId, identifier string) error {
 	path := fmt.Sprintf("/users/%s/targets", userId)
 	payload := map[string]interface{}{
-		"targetId":   "unique()",
-		"providerId": providerId,
-		"identifier": identifier,
+		"targetId":     "unique()",
+		"providerId":   providerId,
+		"providerType": "push",
+		"identifier":   identifier,
 	}
 	_, err := api.req("POST", path, payload)
 	return err
