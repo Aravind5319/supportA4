@@ -265,34 +265,20 @@ func (api *AppwriteAPI) CreateTarget(userId, providerId, identifier string) erro
 	return err
 }
 
-func (api *AppwriteAPI) SendPushNotification(pushTokens []string, title, body string) error {
-	if len(pushTokens) == 0 {
+func (api *AppwriteAPI) SendPushNotification(userIds []string, title, body string) error {
+	if len(userIds) == 0 {
 		return nil
 	}
-	
-	// Deliver the payload directly using the free Expo Push API
-	url := "https://exp.host/--/api/v2/push/send"
-	
-	for _, token := range pushTokens {
-		payload := map[string]interface{}{
-			"to":        token,
-			"sound":     "default",
-			"title":     title,
-			"body":      body,
-			"channelId": "high-priority-tasks",
-		}
-		
-		b, _ := json.Marshal(payload)
-		req, _ := http.NewRequest("POST", url, bytes.NewReader(b))
-		req.Header.Set("Accept", "application/json")
-		req.Header.Set("Content-Type", "application/json")
-		
-		res, err := api.Client.Do(req)
-		if err == nil {
-			res.Body.Close()
-		}
+	path := "/messaging/messages/push"
+	payload := map[string]interface{}{
+		"messageId": "unique()",
+		"title":     title,
+		"body":      body,    // Compatibility
+		"content":   body,    // Appwrite 1.5+
+		"users":     userIds,
 	}
-	return nil
+	_, err := api.req("POST", path, payload)
+	return err
 }
 
 // ---------------------------------------------------------
@@ -355,16 +341,19 @@ func CreateTask(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Res
 	if priority == "HIGH" {
 		Context.Log("High priority task detected! Sending notifications...")
 		usersRaw, _ := api.ListDocuments(DatabaseId, UsersCollection)
-		var pushTokens []string
+		var targetIds []string
 		for _, u := range usersRaw {
-			// Find anyone with an fcmToken (which is now natively an Expo Token)
-			if tok, ok := u["fcmToken"].(string); ok && tok != "" && tok != "NULL" {
-				pushTokens = append(pushTokens, tok)
+			// Now that the Appwrite ID is successfully bound to the token target, we harvest the Auth Account ID!
+			if tok, ok := u["$id"].(string); ok && tok != "" && tok != "NULL" {
+				// We actually need the Appwrite Account ID which we just mapped into the database!
+				// Wait! We passed session.userId to `saveToken`!
+				// So `saveToken` in Go Backend literally created the Document in `users_collection` using the `session.userId` as the Document ID!!
+				targetIds = append(targetIds, tok)
 			}
 		}
 		
-		if len(pushTokens) > 0 {
-			api.SendPushNotification(pushTokens, "🚨 High Priority Alarm", "Urgent printer issue: " + combinedIssues)
+		if len(targetIds) > 0 {
+			api.SendPushNotification(targetIds, "🚨 High Priority Alarm", "Urgent printer issue: " + combinedIssues)
 		}
 	}
 
@@ -385,8 +374,8 @@ func SaveToken(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Resp
 		return Context.Res.Json(map[string]interface{}{"success": false, "error": "userId and fcmToken are required"})
 	}
 
-	// 1. Register as Appwrite Target (Enables Messaging API push for this user)
-	err := api.CreateTarget(payload.UserId, "fcm", payload.FCMToken)
+	// 1. Register as Appwrite Target using the Legit Provider ID from Dashboard
+	err := api.CreateTarget(payload.UserId, "69d4d2ce0027660c1fe2", payload.FCMToken)
 	if err != nil {
 		Context.Log("Target Registration Warning: " + err.Error())
 	}
@@ -563,7 +552,8 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			if err == nil {
 				if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
 					Context.Log("Event Triggered Push! Sending to Tech: " + employeeId)
-					api.SendPushNotification([]string{fcmToken}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
+					// employeeId itself is now safely linked to the Real Appwrite Auth session!
+					api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
 				}
 			}
 		}
