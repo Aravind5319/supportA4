@@ -354,7 +354,12 @@ func CreateTask(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Res
 		}
 		
 		if len(targetIds) > 0 {
-			api.SendPushNotification(targetIds, "🚨 High Priority Alarm", "Urgent printer issue: " + combinedIssues)
+			err := api.SendPushNotification(targetIds, "🚨 High Priority Alarm", "Urgent printer issue: " + combinedIssues)
+			if err != nil {
+				Context.Log("PUSH ERROR (CreateTask): " + err.Error())
+			} else {
+				Context.Log(fmt.Sprintf("PUSH SUCCESS! Broadcasted alert to %d potential technicians.", len(targetIds)))
+			}
 		}
 	}
 
@@ -554,7 +559,12 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 				if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
 					Context.Log("Event Triggered Push! Sending to Tech: " + employeeId)
 					// employeeId itself is now safely linked to the Real Appwrite Auth session!
-					api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
+					err := api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
+					if err != nil {
+						Context.Log("PUSH ERROR (Event): " + err.Error())
+					} else {
+						Context.Log("PUSH SUCCESS! Direct alert delivered to assigned technician.")
+					}
 				}
 			}
 		}
