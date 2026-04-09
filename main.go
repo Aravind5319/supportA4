@@ -558,17 +558,28 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			
 			Context.Log(fmt.Sprintf("DEBUG: Extracted Priority='%s', EmployeeId='%s'", priority, employeeId))
 			
-			if strings.ToUpper(priority) == "HIGH" && employeeId != "" {
-				userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
-				if err == nil {
-					if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
-						Context.Log("Event Triggered Push! Sending to Tech: " + employeeId)
-						err := api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
-						if err != nil {
-							Context.Log("PUSH ERROR (Event): " + err.Error())
-						} else {
-							Context.Log("PUSH SUCCESS! Direct alert delivered.")
+			if strings.ToUpper(priority) == "HIGH" {
+				if employeeId != "" {
+					// 1. Direct assigned technician notification (WhatsApp style)
+					userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
+					if err == nil {
+						if _, ok := userMap["fcmToken"].(string); ok {
+							Context.Log("Direct Push to Tech: " + employeeId)
+							api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: Assigned Task", "New high priority task assigned to you!")
 						}
+					}
+				} else {
+					// 2. Broadcast to ALL technicians because it's unassigned!
+					Context.Log("Unassigned HIGH priority task! Broadcasting to all techs...")
+					usersRaw, _ := api.ListDocuments(DatabaseId, UsersCollection)
+					var broadcastIds []string
+					for _, u := range usersRaw {
+						if id, ok := u["$id"].(string); ok && id != "" {
+							broadcastIds = append(broadcastIds, id)
+						}
+					}
+					if len(broadcastIds) > 0 {
+						api.SendPushNotification(broadcastIds, "🚨 BROADCAST: High Priority", "New unassigned high priority task! Someone please attend!")
 					}
 				}
 			}
