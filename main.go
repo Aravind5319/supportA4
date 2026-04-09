@@ -543,32 +543,34 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	method := Context.Req.Method
 	
 	// --- DATABASE EVENT WEBHOOK INTERCEPTION ---
-	// This intercepts changes made in the Appwrite Dashboard natively so push works universally!
 	appwriteEvent := Context.Req.Headers["x-appwrite-event"]
-	if appwriteEvent != "" && strings.Contains(appwriteEvent, "tasks_collection") {
-		Context.Log("DATABASE EVENT FIRED: " + appwriteEvent)
-		var eventDoc map[string]interface{}
-		_ = ParseBody(Context.Req.Body, &eventDoc)
+	if appwriteEvent != "" {
+		Context.Log("RADAR TRAPPED EVENT: " + appwriteEvent)
 		
-		priority, _ := eventDoc["priority"].(string)
-		employeeId, _ := eventDoc["employeeId"].(string)
-		
-		if priority == "HIGH" && employeeId != "" {
-			userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
-			if err == nil {
-				if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
-					Context.Log("Event Triggered Push! Sending to Tech: " + employeeId)
-					// employeeId itself is now safely linked to the Real Appwrite Auth session!
-					err := api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
-					if err != nil {
-						Context.Log("PUSH ERROR (Event): " + err.Error())
-					} else {
-						Context.Log("PUSH SUCCESS! Direct alert delivered to assigned technician.")
+		// If it's a document/row update in our tasks collection
+		if strings.Contains(appwriteEvent, "documents") || strings.Contains(appwriteEvent, "rows") {
+			var eventDoc map[string]interface{}
+			_ = ParseBody(Context.Req.Body, &eventDoc)
+			
+			priority, _ := eventDoc["priority"].(string)
+			employeeId, _ := eventDoc["employeeId"].(string)
+			
+			if priority == "HIGH" && employeeId != "" {
+				userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
+				if err == nil {
+					if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
+						Context.Log("Event Triggered Push! Sending to Tech: " + employeeId)
+						err := api.SendPushNotification([]string{employeeId}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
+						if err != nil {
+							Context.Log("PUSH ERROR (Event): " + err.Error())
+						} else {
+							Context.Log("PUSH SUCCESS! Direct alert delivered.")
+						}
 					}
 				}
 			}
+			return Context.Res.Json(map[string]interface{}{"success": true, "event": appwriteEvent})
 		}
-		return Context.Res.Json(map[string]interface{}{"success": true, "event": appwriteEvent})
 	}
 	// -------------------------------------------
 
