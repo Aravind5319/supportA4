@@ -552,10 +552,13 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			var eventDoc map[string]interface{}
 			_ = ParseBody(Context.Req.Body, &eventDoc)
 			
+			// Normalize data
 			priority, _ := eventDoc["priority"].(string)
 			employeeId, _ := eventDoc["employeeId"].(string)
 			
-			if priority == "HIGH" && employeeId != "" {
+			Context.Log(fmt.Sprintf("DEBUG: Extracted Priority='%s', EmployeeId='%s'", priority, employeeId))
+			
+			if strings.ToUpper(priority) == "HIGH" && employeeId != "" {
 				userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
 				if err == nil {
 					if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
