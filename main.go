@@ -546,6 +546,31 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 
 	path := Context.Req.Path
 	method := Context.Req.Method
+	
+	// --- DATABASE EVENT WEBHOOK INTERCEPTION ---
+	// This intercepts changes made in the Appwrite Dashboard natively so push works universally!
+	appwriteEvent := Context.Req.Headers["x-appwrite-event"]
+	if appwriteEvent != "" && strings.Contains(appwriteEvent, "tasks_collection") {
+		Context.Log("DATABASE EVENT FIRED: " + appwriteEvent)
+		var eventDoc map[string]interface{}
+		_ = ParseBody(Context.Req.Body, &eventDoc)
+		
+		priority, _ := eventDoc["priority"].(string)
+		employeeId, _ := eventDoc["employeeId"].(string)
+		
+		if priority == "HIGH" && employeeId != "" {
+			userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
+			if err == nil {
+				if fcmToken, ok := userMap["fcmToken"].(string); ok && fcmToken != "" && fcmToken != "NULL" {
+					Context.Log("Event Triggered Push! Sending to Tech: " + employeeId)
+					api.SendPushNotification([]string{fcmToken}, "⚠️ URGENT: High Priority Task!", "New high priority task assigned to you. Please attend immediately!")
+				}
+			}
+		}
+		return Context.Res.Json(map[string]interface{}{"success": true, "event": appwriteEvent})
+	}
+	// -------------------------------------------
+
 	Context.Log("REQUEST: " + method + " " + path)
 
 	if path == "/tasks" && method == "GET" {
