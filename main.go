@@ -18,7 +18,7 @@ const (
 	DatabaseId         = "69cbdded00392d03962c"
 	MaintenanceCol     = "maintenance" // Collection where tasks are created
 	PrintersCollection = "printers"
-	ControlCollection  = "no" // The collection holding the "no" column
+	ControlCollection  = "history_collection" // The collection holding the "no" column
 )
 
 // ---------------------------------------------------------
