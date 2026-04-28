@@ -130,13 +130,18 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 		return
 	}
 
-	// 3. Pick a random error type (only "No something" as requested)
+	// Exact error types provided by the user
 	errorsList := []string{
-		"No Paper",
+		"No paper",
+		"Service Requested",
+		"Jammed",
+		"Paper Jam",
+		"Door Opened",
 		"No toner ink",
-		"No power",
-		"No connection",
-		"No response",
+		"No Toner",
+		"Printer Offline",
+		"Offline",
+		"Low paper",
 	}
 	errType := errorsList[rand.Intn(len(errorsList))]
 
@@ -150,7 +155,7 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 
 	_, createErr := api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
 	if createErr == nil {
-		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", errType, printerId))
+		Context.Log(fmt.Sprintf("Created task: [%s] for printer [%s]", errType, printerId))
 	}
 }
 
@@ -160,7 +165,7 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 
 func Main(Context openruntimes.Context) openruntimes.Response {
 	api := NewAppwriteAPI()
-	Context.Log("Starting Mock Task Generator Backend...")
+	Context.Log("Starting continuous task generator...")
 
 	// Prevent any unhandled panics from crashing the function
 	defer func() {
@@ -169,35 +174,43 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 		}
 	}()
 
+	// Track when the function started
+	startTime := time.Now()
+
 	for {
+		// Appwrite hard-kills functions at 15 minutes (900 seconds).
+		// We gracefully exit at 14.5 minutes (870 seconds) so you get a Green "Completed" status!
+		if time.Since(startTime).Seconds() > 870 {
+			Context.Log("Reached 14.5 minutes. Exiting cleanly to avoid a red Timeout error.")
+			break
+		}
+
 		// 1. Fetch the interval from the control collection
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
 		
 		interval := 0
 		if err == nil && len(docs) > 0 {
-			// Safely extract the number, handling Float, Int, or String types
 			if val, ok := docs[0]["NO."].(float64); ok {
 				interval = int(val)
 			} else if val, ok := docs[0]["NO."].(int); ok {
 				interval = val
 			} else if valStr, ok := docs[0]["NO."].(string); ok {
-				// If they created the Appwrite column as a string instead of integer
 				fmt.Sscanf(valStr, "%d", &interval)
 			}
 		}
 
 		if interval <= 0 {
-			// If 0, missing, or deleted -> Pause silently
-			time.Sleep(10 * time.Second)
+			// If missing or 0, just wait 5 seconds and check again
+			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		// 2. Sleep for the specified interval (e.g., 30 seconds)
+		// 2. Sleep for the specified interval (e.g., 60 seconds)
 		time.Sleep(time.Duration(interval) * time.Second)
 
 		// 3. Generate a new task
 		GenerateRandomTask(Context, api)
 	}
 
-	return Context.Res.Json(map[string]interface{}{"status": "Loop ended"})
+	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Run finished cleanly."})
 }
