@@ -5,10 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/rand"
 	"net/http"
 	"os"
-	"sort"
-	"strings"
 	"time"
 
 	"github.com/open-runtimes/types-for-go/v4/openruntimes"
@@ -17,124 +16,10 @@ import (
 // Constants
 const (
 	DatabaseId         = "69cbdded00392d03962c"
-	TasksCollection    = "tasks_collection"
+	MaintenanceCol     = "maintenance" // Collection where tasks are created
 	PrintersCollection = "printers"
-	UsersCollection    = "users_collection"
-	HistoryCollection  = "history_collection"
+	ControlCollection  = "no"          // The collection holding the "no" column
 )
-
-// Data Structures
-type Task struct {
-	Id         string   `json:"$id,omitempty"`
-	PrinterId  string   `json:"printerId"`
-	EmployeeId string   `json:"employeeId"`
-	Issues     []string `json:"issues"`
-	Priority   string   `json:"priority"`
-	CreatedAt  string   `json:"createdAt"`
-	Deadline   string   `json:"deadline"`
-	Status     string   `json:"status"`
-	Shared     bool     `json:"shared"`
-}
-
-type User struct {
-	Id              string  `json:"$id,omitempty"`
-	Name            string  `json:"name"`
-	Email           string  `json:"email"`
-	Role            string  `json:"role"`
-	FCMToken        string  `json:"fcmToken,omitempty"`
-	TotalTasks      int     `json:"totalTasks"`
-	AvgResponseTime int     `json:"avgResponseTime"`
-	SuccessRate     float64 `json:"successRate"`
-}
-
-// Logic Helpers
-func DeterminePriority(issues []string) string {
-	for _, issue := range issues {
-		if issue == "Paper Jam" || issue == "No Paper" {
-			return "HIGH"
-		}
-	}
-	for _, issue := range issues {
-		if issue == "Ink Low" || issue == "Low Paper" {
-			return "MEDIUM"
-		}
-	}
-	return "LOW"
-}
-
-func DetermineDeadline(priority string, from time.Time) string {
-	var deadline time.Time
-	switch priority {
-	case "HIGH":
-		deadline = from.Add(5 * time.Minute)
-	case "MEDIUM":
-		deadline = from.Add(15 * time.Minute)
-	case "LOW":
-		deadline = from.Add(30 * time.Minute)
-	default:
-		deadline = from.Add(30 * time.Minute)
-	}
-	return deadline.UTC().Format(time.RFC3339)
-}
-
-func SortTasks(tasks []Task) {
-	priorityWeight := map[string]int{
-		"HIGH":   3,
-		"MEDIUM": 2,
-		"LOW":    1,
-	}
-
-	sort.Slice(tasks, func(i, j int) bool {
-		pi := priorityWeight[tasks[i].Priority]
-		pj := priorityWeight[tasks[j].Priority]
-		if pi != pj {
-			return pi > pj
-		}
-
-		di, _ := time.Parse(time.RFC3339, tasks[i].Deadline)
-		dj, _ := time.Parse(time.RFC3339, tasks[j].Deadline)
-		if !di.Equal(dj) {
-			return di.Before(dj)
-		}
-
-		ci, _ := time.Parse(time.RFC3339, tasks[i].CreatedAt)
-		cj, _ := time.Parse(time.RFC3339, tasks[j].CreatedAt)
-		return ci.Before(cj)
-	})
-}
-
-func ParseBody(body interface{}, target interface{}) error {
-	if body == nil {
-		return fmt.Errorf("request body is empty")
-	}
-
-	// Handle case where body is a getter function (common in some runtimes)
-	if getter, ok := body.(func() interface{}); ok {
-		body = getter()
-	}
-
-	var bodyBytes []byte
-	var err error
-
-	switch v := body.(type) {
-	case string:
-		bodyBytes = []byte(v)
-	case []byte:
-		bodyBytes = v
-	default:
-		// Attempt to marshal maps or other objects back to JSON
-		bodyBytes, err = json.Marshal(v)
-		if err != nil {
-			return fmt.Errorf("failed to marshal body object: %v", err)
-		}
-	}
-
-	err = json.Unmarshal(bodyBytes, target)
-	if err != nil {
-		return fmt.Errorf("failed to unmarshal JSON: %v (Raw: %s)", err, string(bodyBytes))
-	}
-	return nil
-}
 
 // ---------------------------------------------------------
 // PURE API IMPLEMENTATION TO AVOID ALL SDK VERSION CRASHES
@@ -210,18 +95,6 @@ func (api *AppwriteAPI) ListDocuments(dbId, colId string) ([]map[string]interfac
 	return docs, nil
 }
 
-func (api *AppwriteAPI) GetDocument(dbId, colId, docId string) (map[string]interface{}, error) {
-	path := fmt.Sprintf("/databases/%s/collections/%s/documents/%s", dbId, colId, docId)
-	b, err := api.req("GET", path, nil)
-	if err != nil {
-		return nil, err
-	}
-
-	var res map[string]interface{}
-	json.Unmarshal(b, &res)
-	return res, nil
-}
-
 func (api *AppwriteAPI) CreateDocument(dbId, colId, docId string, data map[string]interface{}) (map[string]interface{}, error) {
 	path := fmt.Sprintf("/databases/%s/collections/%s/documents", dbId, colId)
 	payload := map[string]interface{}{
@@ -238,294 +111,51 @@ func (api *AppwriteAPI) CreateDocument(dbId, colId, docId string, data map[strin
 	return res, nil
 }
 
-func (api *AppwriteAPI) UpdateDocument(dbId, colId, docId string, data map[string]interface{}) (map[string]interface{}, error) {
-	path := fmt.Sprintf("/databases/%s/collections/%s/documents/%s", dbId, colId, docId)
-	payload := map[string]interface{}{
-		"data": data,
-	}
-	b, err := api.req("PATCH", path, payload)
-	if err != nil {
-		return nil, err
-	}
-
-	var res map[string]interface{}
-	json.Unmarshal(b, &res)
-	return res, nil
-}
-
-// target registration (Required for Appwrite Messaging Push)
-func (api *AppwriteAPI) CreateTarget(userId, providerId, identifier string) error {
-	path := fmt.Sprintf("/users/%s/targets", userId)
-	payload := map[string]interface{}{
-		"targetId":     "unique()",
-		"providerId":   providerId,
-		"providerType": "push",
-		"identifier":   identifier,
-	}
-	_, err := api.req("POST", path, payload)
-	return err
-}
-
-func (api *AppwriteAPI) SendPushNotification(userIds []string, title, body string) error {
-	if len(userIds) == 0 {
-		return nil
-	}
-	path := "/messaging/messages/push"
-	payload := map[string]interface{}{
-		"messageId": "unique()",
-		"title":     title,
-		"body":      body,    // Compatibility
-		"content":   body,    // Appwrite 1.5+
-		"users":     userIds,
-	}
-	_, err := api.req("POST", path, payload)
-	return err
-}
-
 // ---------------------------------------------------------
-// ROUTE HANDLERS
+// GENERATOR LOGIC
 // ---------------------------------------------------------
 
-func GetTasks(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Response {
-	response, err := api.ListDocuments(DatabaseId, TasksCollection)
-	if err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": err.Error()})
+func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
+	// 1. Get Printers
+	printers, err := api.ListDocuments(DatabaseId, PrintersCollection)
+	if err != nil || len(printers) == 0 {
+		Context.Log("Failed to fetch printers or no printers available.")
+		return
 	}
 
-	var tasks []Task
-	for _, rawDoc := range response {
-		b, _ := json.Marshal(rawDoc)
-		var t Task
-		json.Unmarshal(b, &t)
-		if t.Status == "ACTIVE" || t.Status == "ongoing" {
-			tasks = append(tasks, t)
-		}
-	}
-	SortTasks(tasks)
-	return Context.Res.Json(map[string]interface{}{"success": true, "data": tasks})
-}
-
-func CreateTask(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Response {
-	var payload struct {
-		PrinterId string   `json:"printerId"`
-		Issues    []string `json:"issues"`
-	}
-	
-	if err := ParseBody(Context.Req.Body, &payload); err != nil {
-		Context.Log("ParseBody error: " + err.Error())
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": "Invalid request body: " + err.Error()})
+	// 2. Pick a random printer
+	rand.Seed(time.Now().UnixNano())
+	p := printers[rand.Intn(len(printers))]
+	printerId, ok := p["$id"].(string)
+	if !ok {
+		return
 	}
 
-	now := time.Now()
-	priority := DeterminePriority(payload.Issues)
-	deadline := DetermineDeadline(priority, now)
+	// 3. Pick a random error type
+	errors := []string{
+		"No Paper",
+		"No toner ink",
+		"Door opened",
+		"Printer offline",
+		"Service Requested",
+		"Jammed",
+	}
+	errType := errors[rand.Intn(len(errors))]
 
-	// Combine issues into a single string to match Appwrite schema (String, not array)
-	combinedIssues := strings.Join(payload.Issues, ", ")
-
+	// 4. Create Task mapping exactly to the CSV structure
 	taskData := map[string]interface{}{
-		"printerId":  payload.PrinterId,
-		"issues":     combinedIssues,
-		"priority":   priority,
-		"createdAt":  now.UTC().Format(time.RFC3339),
-		"deadline":   deadline,
-		"status":     "ACTIVE",
-		"shared":     false,
+		"printer_id":   printerId,
+		"error_type":   errType,
+		"startTime":    time.Now().UTC().Format(time.RFC3339),
+		"printerFixed": false,
 	}
 
-	doc, err := api.CreateDocument(DatabaseId, TasksCollection, "unique()", taskData)
+	_, err = api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
 	if err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": err.Error()})
-	}
-
-	// FIRE ALERT IF HIGH PRIORITY
-	if priority == "HIGH" {
-		Context.Log("High priority task detected! Sending notifications...")
-		usersRaw, _ := api.ListDocuments(DatabaseId, UsersCollection)
-		var targetIds []string
-		for _, u := range usersRaw {
-			// Now that the Appwrite ID is successfully bound to the token target, we harvest the Auth Account ID!
-			if tok, ok := u["$id"].(string); ok && tok != "" && tok != "NULL" {
-				// We actually need the Appwrite Account ID which we just mapped into the database!
-				// Wait! We passed session.userId to `saveToken`!
-				// So `saveToken` in Go Backend literally created the Document in `users_collection` using the `session.userId` as the Document ID!!
-				targetIds = append(targetIds, tok)
-			}
-		}
-		
-		if len(targetIds) > 0 {
-			err := api.SendPushNotification(targetIds, "🚨 High Priority Alarm", "Urgent printer issue: " + combinedIssues)
-			if err != nil {
-				Context.Log("PUSH ERROR (CreateTask): " + err.Error())
-			} else {
-				Context.Log(fmt.Sprintf("PUSH SUCCESS! Broadcasted alert to %d potential technicians.", len(targetIds)))
-			}
-		}
-	}
-
-	return Context.Res.Json(map[string]interface{}{"success": true, "data": doc})
-}
-
-func SaveToken(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Response {
-	var payload struct {
-		UserId   string `json:"userId"`
-		FCMToken string `json:"fcmToken"`
-	}
-	if err := ParseBody(Context.Req.Body, &payload); err != nil {
-		Context.Log("ParseBody error: " + err.Error())
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": "Invalid body: " + err.Error()})
-	}
-
-	if payload.UserId == "" || payload.FCMToken == "" {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": "userId and fcmToken are required"})
-	}
-
-	// 1. Register as Appwrite Target using the Legit Provider ID from Dashboard
-	err := api.CreateTarget(payload.UserId, "69d4d2ce0027660c1fe2", payload.FCMToken)
-	if err != nil {
-		Context.Log("Target Registration Warning: " + err.Error())
-	}
-
-	// 2. Store in Database (Upsert: Update if exists, Create if not)
-	updateData := map[string]interface{}{
-		"fcmToken": payload.FCMToken,
-	}
-
-	_, err = api.UpdateDocument(DatabaseId, UsersCollection, payload.UserId, updateData)
-	if err != nil {
-		Context.Log("User document not found or error, attempting to create: " + err.Error())
-		
-		// If update fails, try creating the document (using the same UserId as Document ID)
-		createData := map[string]interface{}{
-			"fcmToken": payload.FCMToken,
-			"role": "technician", // Default role for new auto-created technicians
-		}
-		_, err = api.CreateDocument(DatabaseId, UsersCollection, payload.UserId, createData)
-		if err != nil {
-			Context.Log("Critical database Error: " + err.Error())
-			return Context.Res.Json(map[string]interface{}{"success": false, "error": "Failed to save token to database: " + err.Error()})
-		}
-		Context.Log("Successfully created new user document with token")
+		Context.Log("Failed to create mock task: " + err.Error())
 	} else {
-		Context.Log("Successfully updated existing user document with token")
+		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", errType, printerId))
 	}
-
-	return Context.Res.Json(map[string]interface{}{"success": true})
-}
-
-func CompleteTaskByPath(Context openruntimes.Context, api *AppwriteAPI, taskId string) openruntimes.Response {
-    var payload struct {
-        EmployeeId string `json:"employeeId"`
-    }
-    _ = ParseBody(Context.Req.Body, &payload) 
-
-    taskMap, err := api.GetDocument(DatabaseId, TasksCollection, taskId)
-    if err != nil {
-        return Context.Res.Json(map[string]interface{}{"success": false, "error": "Task not found"})
-    }
-
-    var task Task
-    b, _ := json.Marshal(taskMap)
-    json.Unmarshal(b, &task)
-
-    createdAt, _ := time.Parse(time.RFC3339, task.CreatedAt)
-    resolvedAt := time.Now()
-    timeTaken := int(resolvedAt.Sub(createdAt).Minutes())
-
-    historyData := map[string]interface{}{
-        "taskId":     task.Id,
-        "employeeId": payload.EmployeeId,
-        "printerId":  task.PrinterId,
-        "issues":     task.Issues,
-        "resolvedAt": resolvedAt.UTC().Format(time.RFC3339),
-        "timeTaken":  timeTaken,
-    }
-    
-    api.CreateDocument(DatabaseId, HistoryCollection, "unique()", historyData)
-    _, err = api.UpdateDocument(DatabaseId, TasksCollection, task.Id, map[string]interface{}{"status": "DONE"})
-    
-    if err != nil {
-        return Context.Res.Json(map[string]interface{}{"success": false, "error": "Failed to update task status"})
-    }
-
-    if payload.EmployeeId != "" {
-        userMap, err := api.GetDocument(DatabaseId, UsersCollection, payload.EmployeeId)
-        if err == nil {
-            var user User
-            b, _ := json.Marshal(userMap)
-            json.Unmarshal(b, &user)
-
-            newTotal := user.TotalTasks + 1
-            newAvg := ((user.AvgResponseTime * user.TotalTasks) + timeTaken) / newTotal
-
-            api.UpdateDocument(DatabaseId, UsersCollection, payload.EmployeeId, map[string]interface{}{
-                "totalTasks":      newTotal,
-                "avgResponseTime": newAvg,
-            })
-        }
-    }
-
-    return Context.Res.Json(map[string]interface{}{"success": true, "message": "Task completed"})
-}
-
-func UpdatePrinter(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Response {
-	var payload struct {
-		PrinterId    string `json:"printerId"`
-		CurrentPaper int    `json:"currentPaper"`
-		QueueCount   int    `json:"queueCount"`
-		Status       string `json:"status"`
-	}
-	
-	if err := ParseBody(Context.Req.Body, &payload); err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": "Invalid request body"})
-	}
-
-	updateData := map[string]interface{}{
-		"currentPaper": payload.CurrentPaper,
-		"queueCount":   payload.QueueCount,
-		"status":       payload.Status,
-		"lastUpdated":  time.Now().UTC().Format(time.RFC3339),
-	}
-
-	_, err := api.UpdateDocument(DatabaseId, PrintersCollection, payload.PrinterId, updateData)
-	if err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": err.Error()})
-	}
-	return Context.Res.Json(map[string]interface{}{"success": true, "message": "Printer updated successfully"})
-}
-
-func GetPrinters(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Response {
-	docs, err := api.ListDocuments(DatabaseId, PrintersCollection)
-	if err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": err.Error()})
-	}
-	return Context.Res.Json(map[string]interface{}{"success": true, "data": docs})
-}
-
-func GetUserStats(Context openruntimes.Context, api *AppwriteAPI) openruntimes.Response {
-	var payload struct {
-		EmployeeId string `json:"employeeId"`
-	}
-	
-	if err := ParseBody(Context.Req.Body, &payload); err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": "Invalid request body"})
-	}
-
-	userMap, err := api.GetDocument(DatabaseId, UsersCollection, payload.EmployeeId)
-	if err != nil {
-		return Context.Res.Json(map[string]interface{}{"success": false, "error": err.Error()})
-	}
-
-	b, _ := json.Marshal(userMap)
-	var user map[string]interface{}
-	json.Unmarshal(b, &user)
-
-	stats := map[string]interface{}{
-		"totalTasks":      user["totalTasks"],
-		"avgResponseTime": user["avgResponseTime"],
-		"successRate":     user["successRate"],
-	}
-	return Context.Res.Json(map[string]interface{}{"success": true, "data": stats})
 }
 
 // ---------------------------------------------------------
@@ -533,87 +163,39 @@ func GetUserStats(Context openruntimes.Context, api *AppwriteAPI) openruntimes.R
 // ---------------------------------------------------------
 
 func Main(Context openruntimes.Context) openruntimes.Response {
-	if Context.Req.Method == "OPTIONS" {
-		return Context.Res.Json(map[string]interface{}{})
-	}
-
 	api := NewAppwriteAPI()
+	Context.Log("Starting Mock Task Generator Backend...")
 
-	path := Context.Req.Path
-	method := Context.Req.Method
-	
-	// --- DATABASE EVENT WEBHOOK INTERCEPTION ---
-	appwriteEvent := Context.Req.Headers["x-appwrite-event"]
-	if appwriteEvent != "" && (strings.Contains(appwriteEvent, "documents") || strings.Contains(appwriteEvent, "rows")) {
-		var eventDoc map[string]interface{}
-		_ = ParseBody(Context.Req.Body, &eventDoc)
+	for {
+		// 1. Fetch the interval from the control collection ("no")
+		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
 		
-		priority, _ := eventDoc["priority"].(string)
-		employeeId, _ := eventDoc["employeeId"].(string)
-		printerId, _ := eventDoc["printerId"].(string)
-		location, _ := eventDoc["location"].(string)
-		issues, _ := eventDoc["issues"].(string)
-		
-		if strings.ToUpper(priority) == "HIGH" {
-			title := "🚨 High Priority Alarm"
-			body := fmt.Sprintf("Printer: %s | Issue: %s", printerId, issues)
-			if location != "" {
-				body = fmt.Sprintf("%s @ %s", body, location)
-			}
-
-			if employeeId != "" {
-				// 1. Direct assigned technician notification (WhatsApp style)
-				userMap, err := api.GetDocument(DatabaseId, UsersCollection, employeeId)
-				if err == nil {
-					if _, ok := userMap["fcmToken"].(string); ok {
-						api.SendPushNotification([]string{employeeId}, title, body)
-					}
-				}
-			} else {
-				// 2. Broadcast to ALL technicians because it's unassigned!
-				usersRaw, _ := api.ListDocuments(DatabaseId, UsersCollection)
-				var broadcastIds []string
-				for _, u := range usersRaw {
-					if id, ok := u["$id"].(string); ok && id != "" {
-						broadcastIds = append(broadcastIds, id)
-					}
-				}
-				if len(broadcastIds) > 0 {
-					api.SendPushNotification(broadcastIds, "🚨 New Unassigned Task", body)
-				}
+		interval := 0
+		if err == nil && len(docs) > 0 {
+			// Get the number from the "no" column of the first document
+			if val, ok := docs[0]["no"].(float64); ok {
+				interval = int(val)
+			} else if val, ok := docs[0]["no"].(int); ok {
+				interval = val
 			}
 		}
-		return Context.Res.Json(map[string]interface{}{"success": true})
-	}
-	// -------------------------------------------
 
-	Context.Log("REQUEST: " + method + " " + path)
+		if interval <= 0 {
+			// If 0, missing, or deleted -> Pause generation and check again later
+			Context.Log("Interval is 0 or missing. Waiting for valid number...")
+			time.Sleep(10 * time.Second)
+			continue
+		}
 
-	if path == "/tasks" && method == "GET" {
-		return GetTasks(Context, api)
-	}
-	if path == "/tasks" && method == "POST" {
-		return CreateTask(Context, api)
-	}
-    if path == "/saveToken" && method == "POST" {
-        return SaveToken(Context, api)
-    }
-	if path == "/printers" && method == "GET" {
-		return GetPrinters(Context, api)
-	}
-	if path == "/printers" && method == "PUT" {
-		return UpdatePrinter(Context, api)
-	}
-    if path == "/users/stats" && method == "POST" {
-        return GetUserStats(Context, api) 
-    }
-	if strings.HasPrefix(path, "/complete/") && method == "PUT" {
-		taskId := strings.TrimPrefix(path, "/complete/")
-		return CompleteTaskByPath(Context, api, taskId)
+		// 2. Sleep for the specified interval (e.g., 30 seconds)
+		Context.Log(fmt.Sprintf("Interval found: %d. Waiting %d seconds before generating task...", interval, interval))
+		time.Sleep(time.Duration(interval) * time.Second)
+
+		// 3. Generate a new task
+		GenerateRandomTask(Context, api)
 	}
 
-	return Context.Res.Json(map[string]interface{}{
-		"success": false,
-		"error":   "Route not found: " + path,
-	})
+	// The function will loop until Appwrite times it out (usually 15 mins).
+	// Return a response just in case it breaks out.
+	return Context.Res.Json(map[string]interface{}{"status": "Loop ended"})
 }
