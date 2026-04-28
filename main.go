@@ -115,11 +115,17 @@ func (api *AppwriteAPI) CreateDocument(dbId, colId, docId string, data map[strin
 // GENERATOR LOGIC
 // ---------------------------------------------------------
 
+type TaskDef struct {
+	Type     string
+	Priority int
+	Label    string
+	Color    string
+}
+
 func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 	// 1. Get Printers
 	printers, err := api.ListDocuments(DatabaseId, PrintersCollection)
 	if err != nil || len(printers) == 0 {
-		Context.Log("Waiting for printers to be available...")
 		return
 	}
 
@@ -130,32 +136,38 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 		return
 	}
 
-	// Exact error types provided by the user
-	errorsList := []string{
-		"No paper",
-		"Service Requested",
-		"Jammed",
-		"Paper Jam",
-		"Door Opened",
-		"No toner ink",
-		"No Toner",
-		"Printer Offline",
-		"Offline",
-		"Low paper",
+	// 3. Define the specific tasks requested by the user
+	taskDefs := []TaskDef{
+		{Type: "No paper", Priority: 1, Label: "🚨 CRITICAL", Color: "High"},
+		{Type: "Service Requested", Priority: 2, Label: "⚠️ HIGH", Color: "High"},
+		{Type: "Jammed", Priority: 3, Label: "🟠 JAMMED", Color: "Orange"},
+		{Type: "Paper Jam", Priority: 3, Label: "🟠 JAMMED", Color: "Orange"},
+		{Type: "Door Opened", Priority: 4, Label: "⚡ IMMEDIATE", Color: "Orange"},
+		{Type: "No toner ink", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
+		{Type: "No Toner", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
+		{Type: "Printer Offline", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
+		{Type: "Offline", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
+		{Type: "Low paper", Priority: 6, Label: "✅ READY", Color: "Yellow"},
 	}
-	errType := errorsList[rand.Intn(len(errorsList))]
 
-	// 4. Create Task mapping exactly to the CSV structure
+	selected := taskDefs[rand.Intn(len(taskDefs))]
+
+	// 4. Create Task mapping
 	taskData := map[string]interface{}{
 		"printer_id":   printerId,
-		"error_type":   errType,
+		"error_type":   selected.Type,
 		"startTime":    time.Now().UTC().Format(time.RFC3339),
 		"printerFixed": false,
+		"priority":     selected.Priority,
+		"label":        selected.Label,
+		"color":        selected.Color,
 	}
 
 	_, createErr := api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
 	if createErr == nil {
-		Context.Log(fmt.Sprintf("Created task: [%s] for printer [%s]", errType, printerId))
+		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", selected.Type, printerId))
+	} else {
+		Context.Log(fmt.Sprintf("API Error while creating task: %v", createErr))
 	}
 }
 
@@ -165,7 +177,7 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 
 func Main(Context openruntimes.Context) openruntimes.Response {
 	api := NewAppwriteAPI()
-	Context.Log("Starting continuous task generator...")
+	Context.Log("Starting Mock Task Generator Backend...")
 
 	// Prevent any unhandled panics from crashing the function
 	defer func() {
@@ -174,22 +186,13 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 		}
 	}()
 
-	// Track when the function started
-	startTime := time.Now()
-
 	for {
-		// Appwrite hard-kills functions at 15 minutes (900 seconds).
-		// We gracefully exit at 14.5 minutes (870 seconds) so you get a Green "Completed" status!
-		if time.Since(startTime).Seconds() > 870 {
-			Context.Log("Reached 14.5 minutes. Exiting cleanly to avoid a red Timeout error.")
-			break
-		}
-
 		// 1. Fetch the interval from the control collection
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
-		
+
 		interval := 0
 		if err == nil && len(docs) > 0 {
+			// Safely extract the number
 			if val, ok := docs[0]["NO."].(float64); ok {
 				interval = int(val)
 			} else if val, ok := docs[0]["NO."].(int); ok {
@@ -199,18 +202,18 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			}
 		}
 
+		// If the user sets it to 0, EXIT the function gracefully
 		if interval <= 0 {
-			// If missing or 0, just wait 5 seconds and check again
-			time.Sleep(5 * time.Second)
-			continue
+			Context.Log("Interval is 0. Exiting generator.")
+			break
 		}
 
 		// 2. Sleep for the specified interval (e.g., 60 seconds)
 		time.Sleep(time.Duration(interval) * time.Second)
 
-		// 3. Generate a new task
+		// 3. Generate exactly ONE task
 		GenerateRandomTask(Context, api)
 	}
 
-	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Run finished cleanly."})
+	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Generator stopped because interval was set to 0."})
 }
