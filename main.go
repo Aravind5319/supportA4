@@ -176,11 +176,11 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 		interval := 0
 		if err == nil && len(docs) > 0 {
 			// Safely extract the number, handling Float, Int, or String types
-			if val, ok := docs[0]["no"].(float64); ok {
+			if val, ok := docs[0]["NO."].(float64); ok {
 				interval = int(val)
-			} else if val, ok := docs[0]["no"].(int); ok {
+			} else if val, ok := docs[0]["NO."].(int); ok {
 				interval = val
-			} else if valStr, ok := docs[0]["no"].(string); ok {
+			} else if valStr, ok := docs[0]["NO."].(string); ok {
 				// If they created the Appwrite column as a string instead of integer
 				fmt.Sscanf(valStr, "%d", &interval)
 			}
