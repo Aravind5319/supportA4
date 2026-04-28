@@ -18,7 +18,7 @@ const (
 	DatabaseId         = "69cbdded00392d03962c"
 	MaintenanceCol     = "maintenance" // Collection where tasks are created
 	PrintersCollection = "printers"
-	ControlCollection  = "no"          // The collection holding the "no" column
+	ControlCollection  = "no" // The collection holding the "no" column
 )
 
 // ---------------------------------------------------------
@@ -131,14 +131,13 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 		return
 	}
 
-	// 3. Pick a random error type
+	// 3. Pick a random error type (only "No something" as requested)
 	errors := []string{
 		"No Paper",
 		"No toner ink",
-		"Door opened",
-		"Printer offline",
-		"Service Requested",
-		"Jammed",
+		"No power",
+		"No connection",
+		"No response",
 	}
 	errType := errors[rand.Intn(len(errors))]
 
@@ -150,9 +149,9 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 		"printerFixed": false,
 	}
 
-	_, err = api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
-	if err != nil {
-		Context.Log("Failed to create mock task: " + err.Error())
+	_, createErr := api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
+	if createErr != nil {
+		Context.Log("Failed to create mock task: " + createErr.Error())
 	} else {
 		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", errType, printerId))
 	}
@@ -167,12 +166,12 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	Context.Log("Starting Mock Task Generator Backend...")
 
 	for {
-		// 1. Fetch the interval from the control collection ("no")
+		// 1. Fetch the interval from the control collection
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
-		
+
 		interval := 0
 		if err == nil && len(docs) > 0 {
-			// Get the number from the "no" column of the first document
+			// Get the number from the column
 			if val, ok := docs[0]["no"].(float64); ok {
 				interval = int(val)
 			} else if val, ok := docs[0]["no"].(int); ok {
@@ -181,21 +180,17 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 		}
 
 		if interval <= 0 {
-			// If 0, missing, or deleted -> Pause generation and check again later
-			Context.Log("Interval is 0 or missing. Waiting for valid number...")
+			// If 0, missing, or deleted -> Pause generation silently to avoid log flooding
 			time.Sleep(10 * time.Second)
 			continue
 		}
 
 		// 2. Sleep for the specified interval (e.g., 30 seconds)
-		Context.Log(fmt.Sprintf("Interval found: %d. Waiting %d seconds before generating task...", interval, interval))
 		time.Sleep(time.Duration(interval) * time.Second)
 
 		// 3. Generate a new task
 		GenerateRandomTask(Context, api)
 	}
 
-	// The function will loop until Appwrite times it out (usually 15 mins).
-	// Return a response just in case it breaks out.
 	return Context.Res.Json(map[string]interface{}{"status": "Loop ended"})
 }
