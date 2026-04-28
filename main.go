@@ -119,27 +119,26 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 	// 1. Get Printers
 	printers, err := api.ListDocuments(DatabaseId, PrintersCollection)
 	if err != nil || len(printers) == 0 {
-		Context.Log("Failed to fetch printers or no printers available.")
+		Context.Log("Waiting for printers to be available...")
 		return
 	}
 
-	// 2. Pick a random printer
-	rand.Seed(time.Now().UnixNano())
+	// 2. Pick a random printer safely
 	p := printers[rand.Intn(len(printers))]
 	printerId, ok := p["$id"].(string)
-	if !ok {
+	if !ok || printerId == "" {
 		return
 	}
 
 	// 3. Pick a random error type (only "No something" as requested)
-	errors := []string{
+	errorsList := []string{
 		"No Paper",
 		"No toner ink",
 		"No power",
 		"No connection",
 		"No response",
 	}
-	errType := errors[rand.Intn(len(errors))]
+	errType := errorsList[rand.Intn(len(errorsList))]
 
 	// 4. Create Task mapping exactly to the CSV structure
 	taskData := map[string]interface{}{
@@ -150,9 +149,7 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 	}
 
 	_, createErr := api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
-	if createErr != nil {
-		Context.Log("Failed to create mock task: " + createErr.Error())
-	} else {
+	if createErr == nil {
 		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", errType, printerId))
 	}
 }
@@ -165,22 +162,32 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	api := NewAppwriteAPI()
 	Context.Log("Starting Mock Task Generator Backend...")
 
+	// Prevent any unhandled panics from crashing the function
+	defer func() {
+		if r := recover(); r != nil {
+			Context.Log(fmt.Sprintf("Recovered from panic: %v", r))
+		}
+	}()
+
 	for {
 		// 1. Fetch the interval from the control collection
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
-
+		
 		interval := 0
 		if err == nil && len(docs) > 0 {
-			// Get the number from the column
+			// Safely extract the number, handling Float, Int, or String types
 			if val, ok := docs[0]["no"].(float64); ok {
 				interval = int(val)
 			} else if val, ok := docs[0]["no"].(int); ok {
 				interval = val
+			} else if valStr, ok := docs[0]["no"].(string); ok {
+				// If they created the Appwrite column as a string instead of integer
+				fmt.Sscanf(valStr, "%d", &interval)
 			}
 		}
 
 		if interval <= 0 {
-			// If 0, missing, or deleted -> Pause generation silently to avoid log flooding
+			// If 0, missing, or deleted -> Pause silently
 			time.Sleep(10 * time.Second)
 			continue
 		}
