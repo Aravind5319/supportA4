@@ -115,13 +115,6 @@ func (api *AppwriteAPI) CreateDocument(dbId, colId, docId string, data map[strin
 // GENERATOR LOGIC
 // ---------------------------------------------------------
 
-type TaskDef struct {
-	Type     string
-	Priority int
-	Label    string
-	Color    string
-}
-
 func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 	// 1. Get Printers
 	printers, err := api.ListDocuments(DatabaseId, PrintersCollection)
@@ -136,36 +129,32 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 		return
 	}
 
-	// 3. Define the specific tasks requested by the user
-	taskDefs := []TaskDef{
-		{Type: "No paper", Priority: 1, Label: "🚨 CRITICAL", Color: "High"},
-		{Type: "Service Requested", Priority: 2, Label: "⚠️ HIGH", Color: "High"},
-		{Type: "Jammed", Priority: 3, Label: "🟠 JAMMED", Color: "Orange"},
-		{Type: "Paper Jam", Priority: 3, Label: "🟠 JAMMED", Color: "Orange"},
-		{Type: "Door Opened", Priority: 4, Label: "⚡ IMMEDIATE", Color: "Orange"},
-		{Type: "No toner ink", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
-		{Type: "No Toner", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
-		{Type: "Printer Offline", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
-		{Type: "Offline", Priority: 5, Label: "🔵 CRITICAL", Color: "Blue"},
-		{Type: "Low paper", Priority: 6, Label: "✅ READY", Color: "Yellow"},
+	// 3. Define the specific error types
+	errorTypes := []string{
+		"No paper",
+		"Service Requested",
+		"Jammed",
+		"Paper Jam",
+		"Door Opened",
+		"No toner ink",
+		"No Toner",
+		"Printer Offline",
+		"Offline",
+		"Low paper",
 	}
 
-	selected := taskDefs[rand.Intn(len(taskDefs))]
+	selectedError := errorTypes[rand.Intn(len(errorTypes))]
 
-	// 4. Create Task mapping
+	// 4. Create Task mapping - EXACTLY as requested (no color, employee, priority, etc)
 	taskData := map[string]interface{}{
 		"printer_id":   printerId,
-		"error_type":   selected.Type,
-		"startTime":    time.Now().UTC().Format(time.RFC3339),
+		"error_type":   selectedError,
 		"printerFixed": false,
-		"priority":     selected.Priority,
-		"label":        selected.Label,
-		// "color" attribute was removed to fix the Appwrite Unknown attribute error
 	}
 
 	_, createErr := api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
 	if createErr == nil {
-		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", selected.Type, printerId))
+		Context.Log(fmt.Sprintf("Created new mock task: [%s] for printer [%s]", selectedError, printerId))
 	} else {
 		Context.Log(fmt.Sprintf("API Error while creating task: %v", createErr))
 	}
