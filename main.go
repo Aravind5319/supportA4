@@ -179,80 +179,52 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 	api := NewAppwriteAPI()
 	Context.Log("Starting Mock Task Generator Backend...")
 
-	// Prevent any unhandled panics from crashing the function
+	// Prevent any unhandled panics
 	defer func() {
 		if r := recover(); r != nil {
 			Context.Log(fmt.Sprintf("Recovered from panic: %v", r))
 		}
 	}()
 
-	startTime := time.Now()
-	maxDuration := 14 * time.Minute // 14 minutes limit to safely avoid Appwrite's 15m timeout
-
 	for {
-		// 1. Fetch the interval from the control collection
+		// 1. Read the DB to get the live number (interval)
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
 
 		interval := 0
-		if err != nil {
-			Context.Log(fmt.Sprintf("FATAL ERROR: Failed to fetch control collection: %v", err))
-		} else if len(docs) == 0 {
-			Context.Log("FATAL ERROR: Control collection is empty. No documents found.")
-		} else {
+		if err == nil && len(docs) > 0 {
 			doc := docs[0]
 			var val interface{}
 			
-			// Check common variations of the field name
-			if v, ok := doc["no"]; ok {
-				val = v
-			} else if v, ok := doc["No"]; ok {
-				val = v
-			} else if v, ok := doc["NO"]; ok {
-				val = v
-			} else if v, ok := doc["NO."]; ok {
-				val = v
-			} else if v, ok := doc["interval"]; ok {
-				val = v
-			} else if v, ok := doc["No."]; ok {
-				val = v
-			} else if v, ok := doc["no."]; ok {
-				val = v
-			}
+			// Check for 'NO.' or 'no'
+			if v, ok := doc["NO."]; ok { val = v } else 
+			if v, ok := doc["no"]; ok { val = v } else 
+			if v, ok := doc["No"]; ok { val = v } else 
+			if v, ok := doc["NO"]; ok { val = v } else 
+			if v, ok := doc["interval"]; ok { val = v }
 
 			if val != nil {
-				if v, ok := val.(float64); ok {
-					interval = int(v)
-				} else if v, ok := val.(int); ok {
-					interval = v
-				} else if vStr, ok := val.(string); ok {
-					fmt.Sscanf(vStr, "%d", &interval)
-				}
-				Context.Log(fmt.Sprintf("Successfully read interval: %d", interval))
-			} else {
-				b, _ := json.Marshal(doc)
-				Context.Log(fmt.Sprintf("FATAL ERROR: Interval field not found in document. Doc: %s", string(b)))
+				if v, ok := val.(float64); ok { interval = int(v) } else 
+				if v, ok := val.(int); ok { interval = v } else 
+				if vStr, ok := val.(string); ok { fmt.Sscanf(vStr, "%d", &interval) }
 			}
 		}
 
-		// If the user sets it to 0 or it failed to fetch, EXIT the function gracefully
+		// 2. If interval is 0 or missing, just PAUSE and check again soon
 		if interval <= 0 {
-			Context.Log(fmt.Sprintf("Interval is %d. Exiting generator.", interval))
-			break
+			Context.Log("Interval is 0 (or not found). Pausing for 5 seconds and checking DB again...")
+			time.Sleep(5 * time.Second)
+			continue
 		}
 
-		// 2. Prevent Appwrite 500 Timeout Error
-		// If sleeping for the next interval pushes us over 14 minutes, exit gracefully instead.
-		if time.Since(startTime)+(time.Duration(interval)*time.Second) >= maxDuration {
-			Context.Log("Function has reached its 14-minute safe limit. Exiting gracefully to prevent Appwrite 500 Timeout.")
-			break
-		}
-
-		// 3. Sleep for the specified interval (e.g., 60 seconds)
-		time.Sleep(time.Duration(interval) * time.Second)
-
-		// 4. Generate exactly ONE task
+		// 3. Create ONE random task and save it in maintenance DB
 		GenerateRandomTask(Context, api)
+
+		// 4. Wait for the exact seconds defined in the DB
+		Context.Log(fmt.Sprintf("Task created! Waiting for %d seconds...", interval))
+		time.Sleep(time.Duration(interval) * time.Second)
+		
+		// 5. Continues the infinite loop!
 	}
 
-	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Generator execution completed gracefully."})
+	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Done."})
 }
