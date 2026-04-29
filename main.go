@@ -186,6 +186,9 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 		}
 	}()
 
+	startTime := time.Now()
+	maxDuration := 14 * time.Minute // 14 minutes limit to safely avoid Appwrite's 15m timeout
+
 	for {
 		// 1. Fetch the interval from the control collection
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
@@ -237,12 +240,19 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 			break
 		}
 
-		// 2. Sleep for the specified interval (e.g., 60 seconds)
+		// 2. Prevent Appwrite 500 Timeout Error
+		// If sleeping for the next interval pushes us over 14 minutes, exit gracefully instead.
+		if time.Since(startTime)+(time.Duration(interval)*time.Second) >= maxDuration {
+			Context.Log("Function has reached its 14-minute safe limit. Exiting gracefully to prevent Appwrite 500 Timeout.")
+			break
+		}
+
+		// 3. Sleep for the specified interval (e.g., 60 seconds)
 		time.Sleep(time.Duration(interval) * time.Second)
 
-		// 3. Generate exactly ONE task
+		// 4. Generate exactly ONE task
 		GenerateRandomTask(Context, api)
 	}
 
-	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Generator stopped because interval was set to 0."})
+	return Context.Res.Json(map[string]interface{}{"status": "Success", "message": "Generator execution completed gracefully."})
 }
