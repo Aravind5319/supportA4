@@ -192,19 +192,39 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 
 		interval := 0
 		if err == nil && len(docs) > 0 {
-			// Safely extract the number
-			if val, ok := docs[0]["NO."].(float64); ok {
-				interval = int(val)
-			} else if val, ok := docs[0]["NO."].(int); ok {
-				interval = val
-			} else if valStr, ok := docs[0]["NO."].(string); ok {
-				fmt.Sscanf(valStr, "%d", &interval)
+			doc := docs[0]
+			var val interface{}
+			
+			// Check common variations of the field name
+			if v, ok := doc["no"]; ok {
+				val = v
+			} else if v, ok := doc["No"]; ok {
+				val = v
+			} else if v, ok := doc["NO"]; ok {
+				val = v
+			} else if v, ok := doc["NO."]; ok {
+				val = v
+			} else if v, ok := doc["interval"]; ok {
+				val = v
+			}
+
+			if val != nil {
+				if v, ok := val.(float64); ok {
+					interval = int(v)
+				} else if v, ok := val.(int); ok {
+					interval = v
+				} else if vStr, ok := val.(string); ok {
+					fmt.Sscanf(vStr, "%d", &interval)
+				}
+			} else {
+				b, _ := json.Marshal(doc)
+				Context.Log(fmt.Sprintf("Interval field not found. Doc: %s", string(b)))
 			}
 		}
 
 		// If the user sets it to 0, EXIT the function gracefully
 		if interval <= 0 {
-			Context.Log("Interval is 0. Exiting generator.")
+			Context.Log(fmt.Sprintf("Interval is %d. Exiting generator.", interval))
 			break
 		}
 
