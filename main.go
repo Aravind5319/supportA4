@@ -191,7 +191,11 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 		docs, err := api.ListDocuments(DatabaseId, ControlCollection)
 
 		interval := 0
-		if err == nil && len(docs) > 0 {
+		if err != nil {
+			Context.Log(fmt.Sprintf("FATAL ERROR: Failed to fetch control collection: %v", err))
+		} else if len(docs) == 0 {
+			Context.Log("FATAL ERROR: Control collection is empty. No documents found.")
+		} else {
 			doc := docs[0]
 			var val interface{}
 			
@@ -206,6 +210,10 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 				val = v
 			} else if v, ok := doc["interval"]; ok {
 				val = v
+			} else if v, ok := doc["No."]; ok {
+				val = v
+			} else if v, ok := doc["no."]; ok {
+				val = v
 			}
 
 			if val != nil {
@@ -216,13 +224,14 @@ func Main(Context openruntimes.Context) openruntimes.Response {
 				} else if vStr, ok := val.(string); ok {
 					fmt.Sscanf(vStr, "%d", &interval)
 				}
+				Context.Log(fmt.Sprintf("Successfully read interval: %d", interval))
 			} else {
 				b, _ := json.Marshal(doc)
-				Context.Log(fmt.Sprintf("Interval field not found. Doc: %s", string(b)))
+				Context.Log(fmt.Sprintf("FATAL ERROR: Interval field not found in document. Doc: %s", string(b)))
 			}
 		}
 
-		// If the user sets it to 0, EXIT the function gracefully
+		// If the user sets it to 0 or it failed to fetch, EXIT the function gracefully
 		if interval <= 0 {
 			Context.Log(fmt.Sprintf("Interval is %d. Exiting generator.", interval))
 			break
