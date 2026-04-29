@@ -160,7 +160,7 @@ func GenerateRandomTask(Context openruntimes.Context, api *AppwriteAPI) {
 		"printerFixed": false,
 		"priority":     selected.Priority,
 		"label":        selected.Label,
-		"color":        selected.Color,
+		// "color" attribute was removed to fix the Appwrite Unknown attribute error
 	}
 
 	_, createErr := api.CreateDocument(DatabaseId, MaintenanceCol, "unique()", taskData)
